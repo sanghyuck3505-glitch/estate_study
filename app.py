@@ -2,75 +2,123 @@ import streamlit as st
 import requests
 import pandas as pd
 import xml.etree.ElementTree as ET
+from datetime import datetime
+from dateutil.relativedelta import relativedelta
 
-# 웹 앱 페이지 기본 설정
+# 1. 페이지 기본 설정 및 제목 변경
 st.set_page_config(page_title="아파트 실거래가 비교", layout="wide")
-
-# 1. 요청하신 맞춤형 제목으로 변경
 st.title("🏢 북힐7차와 다른 아파트 비교, 자산증식 합시다~혜주쓰")
 
-# 2. 사이드바 기본 검색 조건 세팅
+# 2. 날짜 기본값 계산 (오늘 기준 전달)
+today = datetime.today()
+last_month = today - relativedelta(months=1)
+default_month_str = last_month.strftime("%Y%m")
+
+# 드롭다운용 최근 3년(36개월) 월 리스트 생성
+month_list = [(today - relativedelta(months=i)).strftime("%Y%m") for i in range(36)]
+
+# 3. 사이드바 UI 설정
 st.sidebar.header("검색 조건 설정")
 lawd_cd = st.sidebar.text_input("지역코드 5자리", "11380")
-deal_ymd = st.sidebar.text_input("계약월 (예: 202609)", "202609")
 
-# 3. 처음 화면에 바로 띄우기 위해 아파트명과 면적의 기본값을 미리 채워둠
-target_apt = st.sidebar.text_input("찾고 싶은 아파트 이름 (선택)", "북한산힐스테이트7차")
+st.sidebar.subheader("조회 기간")
+col1, col2 = st.sidebar.columns(2)
+with col1:
+    # index를 활용해 기본값을 전달(202609)로 지정
+    start_month = st.selectbox("시작 월", month_list[::-1], index=month_list[::-1].index(default_month_str))
+with col2:
+    end_month = st.selectbox("종료 월", month_list[::-1], index=month_list[::-1].index(default_month_str))
+
 target_area = st.sidebar.text_input("전용면적(㎡) 앞자리 (예: 59)", "59")
 
-# 버튼 없이 조건이 바뀔 때마다 즉시 데이터를 불러오도록 구조를 변경했습니다.
+# 비교할 아파트 목록 세팅
+default_apts = ["북한산힐스테이트7차", "북한산현대힐스테이트3차", "래미안베라힐즈", "불광롯데캐슬"]
+selected_apts = st.sidebar.multiselect("비교 대상 아파트", default_apts, default=default_apts)
+
+if start_month > end_month:
+    st.sidebar.error("시작 월이 종료 월보다 늦을 수 없습니다.")
+    st.stop()
+
+# 4. 데이터 조회 (시작월~종료월)
+# 조회할 월 목록 생성 (예: 202607 ~ 202609)
+start_dt = pd.to_datetime(start_month, format='%Y%m')
+end_dt = pd.to_datetime(end_month, format='%Y%m')
+months_to_fetch = pd.date_range(start=start_dt, end=end_dt, freq='MS').strftime("%Y%m").tolist()
+
 url = "https://apis.data.go.kr/1613000/RTMSDataSvcAptTrade/getRTMSDataSvcAptTrade"
+all_data = []
 
-params = {
-    'serviceKey': '014e8e30437cc041035a920222ccefa9300b972ca4da6fe54529c27c14cea8b2',
-    'pageNo': '1',
-    'numOfRows': '1000', 
-    'LAWD_CD': lawd_cd,
-    'DEAL_YMD': deal_ymd
-}
-
-with st.spinner('데이터를 불러오는 중입니다...'):
-    response = requests.get(url, params=params)
-    
-    if response.status_code == 200:
-        root = ET.fromstring(response.content)
-        items = root.findall('.//item')
+# API는 한 번에 한 달치만 조회 가능하므로 월별로 반복 호출
+with st.spinner('여러 달의 데이터를 불러오는 중입니다... (조금만 기다려주세요)'):
+    for ymd in months_to_fetch:
+        params = {
+            'serviceKey': '014e8e30437cc041035a920222ccefa9300b972ca4da6fe54529c27c14cea8b2',
+            'pageNo': '1',
+            'numOfRows': '1000', 
+            'LAWD_CD': lawd_cd,
+            'DEAL_YMD': ymd
+        }
         
-        if items:
-            data = []
+        response = requests.get(url, params=params)
+        
+        if response.status_code == 200:
+            root = ET.fromstring(response.content)
+            items = root.findall('.//item')
+            
             for item in items:
-                apt_name = item.find('aptNm').text if item.find('aptNm') is not None else ''
-                price = item.find('dealAmount').text if item.find('dealAmount') is not None else ''
-                area = item.find('excluUseAr').text if item.find('excluUseAr') is not None else ''
-                floor = item.find('floor').text if item.find('floor') is not None else ''
-                day = item.find('dealDay').text if item.find('dealDay') is not None else ''
+                apt_name = item.find('aptNm').text.strip() if item.find('aptNm') is not None else ''
                 
-                data.append({
-                    '아파트명': apt_name.strip(),
-                    '거래금액(만원)': price.strip(),
-                    '전용면적(㎡)': area,
-                    '층': floor,
-                    '거래일': f"{day}일"
-                })
-            
-            df = pd.DataFrame(data)
-            
-            # 4. 전용면적 필터링: 면적 데이터(예: 59.981)를 '.' 기준으로 잘라 앞자리만 비교
-            if target_area:
-                df = df[df['전용면적(㎡)'].apply(lambda x: str(x).split('.')[0] == target_area.strip())]
+                # 선택된 아파트(4종) 중 하나인지 확인
+                if any(apt in apt_name for apt in selected_apts):
+                    area = item.find('excluUseAr').text if item.find('excluUseAr') is not None else '0'
+                    
+                    # 면적 필터링 (59㎡)
+                    if str(area).split('.')[0] == target_area.strip():
+                        price_str = item.find('dealAmount').text.strip() if item.find('dealAmount') is not None else '0'
+                        floor = item.find('floor').text if item.find('floor') is not None else '0'
+                        day = item.find('dealDay').text.zfill(2) if item.find('dealDay') is not None else ''
+                        month = item.find('dealMonth').text.zfill(2) if item.find('dealMonth') is not None else ''
+                        year = item.find('dealYear').text if item.find('dealYear') is not None else ''
+                        
+                        price_num = int(price_str.replace(',', ''))
+                        
+                        all_data.append({
+                            '계약월': f"{year}-{month}",
+                            '거래일': f"{day}일",
+                            '아파트명': apt_name,
+                            '전용면적(㎡)': area,
+                            '층': floor,
+                            '거래금액(만원)': price_num
+                        })
 
-            # 5. 아파트 이름 필터링 및 결과 출력
-            if target_apt:
-                filtered_df = df[df['아파트명'].str.contains(target_apt, na=False)]
-                if not filtered_df.empty:
-                    st.success(f"🔍 '{target_apt}' (전용면적 {target_area}㎡대) 검색 결과: 총 {len(filtered_df)}건")
-                    st.dataframe(filtered_df, use_container_width=True)
-                else:
-                    st.warning(f"조건과 일치하는 거래 내역이 없습니다.")
-            else:
-                st.success(f"해당 지역 전용면적 {target_area}㎡대 전체 거래 내역: 총 {len(df)}건")
-                st.dataframe(df, use_container_width=True)
+    # 5. 수집된 데이터 가공 및 표(UI) 출력
+    if all_data:
+        df = pd.DataFrame(all_data)
+        
+        # 우리집(북힐7차) 데이터만 뽑아 평균가 계산
+        our_apt_df = df[df['아파트명'].str.contains('북한산힐스테이트7차')]
+        
+        if not our_apt_df.empty:
+            our_avg_price = our_apt_df['거래금액(만원)'].mean()
+            
+            # 차액 계산 및 포맷팅 (비교 아파트 가격 - 우리집 평균가)
+            df['우리집 평균대비 차액'] = df['거래금액(만원)'] - our_avg_price
+            df['우리집 평균대비 차액'] = df['우리집 평균대비 차액'].apply(
+                lambda x: f"🔺 +{int(x):,}만원" if x > 0 else (f"🔻 {int(x):,}만원" if x < 0 else "-")
+            )
+            
+            st.info(f"💡 조회 기간 내 **북한산힐스테이트7차 {target_area}㎡**의 평균 거래가는 **{int(our_avg_price):,}만원**입니다.")
         else:
-            st.warning("해당 조건에 맞는 거래 데이터가 없습니다.")
+            df['우리집 평균대비 차액'] = "우리집 거래없음"
+            st.warning(f"조회 기간 내 '북한산힐스테이트7차'의 거래 내역이 없어 기준가를 계산할 수 없습니다.")
+
+        # 가격 컬럼 보기 좋게 천 단위 콤마 추가
+        df['거래금액(만원)'] = df['거래금액(만원)'].apply(lambda x: f"{x:,}")
+        
+        # 최신 거래일자 순으로 정렬
+        df = df.sort_values(by=['계약월', '거래일'], ascending=[False, False])
+        
+        st.success(f"조회 완료: 선택한 아파트 총 {len(df)}건 거래 (전용 {target_area}㎡ 기준)")
+        st.dataframe(df, use_container_width=True, hide_index=True)
     else:
-        st.error(f"API 호출 실패 (HTTP 상태 코드: {response.status_code})")
+        st.warning("선택한 기간 내 조건에 맞는 거래 데이터가 없습니다.")
