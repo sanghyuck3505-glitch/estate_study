@@ -1,4 +1,4 @@
-현재 화면에는 '우리 아파트 실거래가 비교 조회'라는 기본 제목과 함께 필터링되지 않은 은평구 전체 실거래가 147건이 그대로 노출되어 있습니다.   요청하신 대로 제목을 변경하고, 처음 접속했을 때 별도로 버튼을 누르지 않아도 북한산힐스테이트7차의 59㎡(소수점 무시) 데이터가 즉시 화면에 뜨도록 코드를 개선했습니다.이전과 동일하게 app.py의 내용을 모두 지우고 아래 코드로 덮어씌운 뒤 깃허브에 저장(Commit changes)해 주세요.Pythonimport streamlit as st
+import streamlit as st
 import requests
 import pandas as pd
 import xml.etree.ElementTree as ET
