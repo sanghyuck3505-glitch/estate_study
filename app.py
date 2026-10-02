@@ -9,8 +9,9 @@ from dateutil.relativedelta import relativedelta
 st.set_page_config(page_title="아파트 실거래가 비교", layout="wide")
 st.title("🏢 북힐7차와 다른 아파트 비교, 자산증식 합시다~혜주쓰")
 
-# 2. 날짜 기본값 계산 (오늘 기준 전달)
+# 2. 날짜 기본값 계산 (오늘 기준)
 today = datetime.today()
+current_year = today.year # 올해 연도 (예: 2026)
 last_month = today - relativedelta(months=1)
 default_month_str = last_month.strftime("%Y%m")
 
@@ -24,7 +25,7 @@ lawd_cd = st.sidebar.text_input("지역코드 5자리", "11380")
 st.sidebar.subheader("조회 기간")
 col1, col2 = st.sidebar.columns(2)
 with col1:
-    # index를 활용해 기본값을 전달(202609)로 지정
+    # index를 활용해 기본값을 전달로 지정
     start_month = st.selectbox("시작 월", month_list[::-1], index=month_list[::-1].index(default_month_str))
 with col2:
     end_month = st.selectbox("종료 월", month_list[::-1], index=month_list[::-1].index(default_month_str))
@@ -40,7 +41,6 @@ if start_month > end_month:
     st.stop()
 
 # 4. 데이터 조회 (시작월~종료월)
-# 조회할 월 목록 생성 (예: 202607 ~ 202609)
 start_dt = pd.to_datetime(start_month, format='%Y%m')
 end_dt = pd.to_datetime(end_month, format='%Y%m')
 months_to_fetch = pd.date_range(start=start_dt, end=end_dt, freq='MS').strftime("%Y%m").tolist()
@@ -95,22 +95,30 @@ with st.spinner('여러 달의 데이터를 불러오는 중입니다... (조금
     if all_data:
         df = pd.DataFrame(all_data)
         
-        # 우리집(북힐7차) 데이터만 뽑아 평균가 계산
-        our_apt_df = df[df['아파트명'].str.contains('북한산힐스테이트7차')]
+        # 🌟 [수정된 부분] 8월을 기준으로 문자열 생성 (예: '2026-08')
+        august_str = f"{current_year}-08"
+        
+        # 🌟 [수정된 부분] 북힐7차 데이터 중 '8월 이후' 데이터만 추출
+        our_apt_df = df[
+            (df['아파트명'].str.contains('북한산힐스테이트7차')) & 
+            (df['계약월'] >= august_str)
+        ]
         
         if not our_apt_df.empty:
-            our_avg_price = our_apt_df['거래금액(만원)'].mean()
+            # 🌟 [수정된 부분] mean()(평균) 대신 max()(최고가)를 사용합니다!
+            our_base_price = our_apt_df['거래금액(만원)'].max()
             
-            # 차액 계산 및 포맷팅 (비교 아파트 가격 - 우리집 평균가)
-            df['우리집 평균대비 차액'] = df['거래금액(만원)'] - our_avg_price
-            df['우리집 평균대비 차액'] = df['우리집 평균대비 차액'].apply(
+            # 차액 계산 (비교 아파트 가격 - 우리집 8월 이후 최고가)
+            df['우리집 최고가대비 차액'] = df['거래금액(만원)'] - our_base_price
+            df['우리집 최고가대비 차액'] = df['우리집 최고가대비 차액'].apply(
                 lambda x: f"🔺 +{int(x):,}만원" if x > 0 else (f"🔻 {int(x):,}만원" if x < 0 else "-")
             )
             
-            st.info(f"💡 조회 기간 내 **북한산힐스테이트7차 {target_area}㎡**의 평균 거래가는 **{int(our_avg_price):,}만원**입니다.")
+            st.info(f"💡 기준가 설정 완료: **북한산힐스테이트7차 {target_area}㎡**의 {current_year}년 8월~현재 **최고 실거래가는 {int(our_base_price):,}만원**입니다.")
         else:
-            df['우리집 평균대비 차액'] = "우리집 거래없음"
-            st.warning(f"조회 기간 내 '북한산힐스테이트7차'의 거래 내역이 없어 기준가를 계산할 수 없습니다.")
+            # 8월 이후 거래가 없거나, 검색 기간에 8월 이후가 포함되지 않은 경우
+            df['우리집 최고가대비 차액'] = "최고가 산정불가"
+            st.warning(f"⚠️ 검색하신 기간 내에 {current_year}년 8월 이후 '북한산힐스테이트7차' 거래가 없어 기준가(최고가)를 계산할 수 없습니다. 사이드바에서 조회 기간을 8월 이후로 설정해주세요!")
 
         # 가격 컬럼 보기 좋게 천 단위 콤마 추가
         df['거래금액(만원)'] = df['거래금액(만원)'].apply(lambda x: f"{x:,}")
