@@ -17,13 +17,12 @@ default_month_str = last_month.strftime("%Y%m")
 # 드롭다운용 최근 3년(36개월) 월 리스트 생성
 month_list = [(today - relativedelta(months=i)).strftime("%Y%m") for i in range(36)]
 
-# 🌟 [신규 추가] 최근 3개월 전 날짜 계산 (기준가 산정용)
+# 최근 3개월 전 날짜 계산 (기준가 산정용)
 three_months_ago = today - relativedelta(months=3)
 three_months_ago_str = three_months_ago.strftime("%Y-%m") # 예: 2026-07
 
 # 3. 사이드바 UI 설정
 st.sidebar.header("검색 조건 설정")
-# 🌟 [수정] 은평구와 서대문구를 모두 조회할 것이므로 지역코드 입력창은 숨기거나 고정합니다.
 st.sidebar.info("📌 지역: 은평구, 서대문구 자동 조회")
 
 st.sidebar.subheader("조회 기간")
@@ -36,7 +35,7 @@ with col2:
 target_area = st.sidebar.text_input("기본 전용면적(㎡) (예: 59)", "59")
 st.sidebar.caption("※ 무악청구1차, 홍제한양은 자동으로 84㎡가 조회됩니다.")
 
-# 🌟 [수정] 비교할 아파트 목록에 서대문구 및 은평구 추가 단지 세팅
+# 비교할 아파트 목록 세팅
 default_apts = [
     "북한산힐스테이트7차", "북한산현대힐스테이트3차", "래미안베라힐즈", "불광롯데캐슬",
     "돈의문센트레빌", "녹번역e편한세상캐슬", "은평뉴타운박석고개힐스테이트1단지",
@@ -55,13 +54,11 @@ months_to_fetch = pd.date_range(start=start_dt, end=end_dt, freq='MS').strftime(
 
 url = "https://apis.data.go.kr/1613000/RTMSDataSvcAptTrade/getRTMSDataSvcAptTrade"
 all_data = []
-
-# 🌟 [수정] 은평구(11380)와 서대문구(11410) 코드를 리스트로 만들어 두 지역 모두 조회합니다.
-lawd_cd_list = ['11380', '11410']
+lawd_cd_list = ['11380', '11410'] # 은평구, 서대문구 코드
 
 with st.spinner('은평구 및 서대문구의 데이터를 불러오는 중입니다... (조금만 기다려주세요)'):
     for ymd in months_to_fetch:
-        for lawd_cd in lawd_cd_list: # 지역별로 한 번씩 API 호출
+        for lawd_cd in lawd_cd_list:
             params = {
                 'serviceKey': '014e8e30437cc041035a920222ccefa9300b972ca4da6fe54529c27c14cea8b2',
                 'pageNo': '1',
@@ -84,7 +81,7 @@ with st.spinner('은평구 및 서대문구의 데이터를 불러오는 중입�
                         area = item.find('excluUseAr').text if item.find('excluUseAr') is not None else '0'
                         area_prefix = str(area).split('.')[0]
                         
-                        # 🌟 [수정] 특정 아파트(무악청구1차, 홍제한양)는 무조건 84㎡로 필터링, 나머지는 target_area로 필터링
+                        # 특정 아파트(무악청구1차, 홍제한양)는 무조건 84㎡로 필터링, 나머지는 target_area로 필터링
                         is_target_area = False
                         if "무악청구" in apt_name or "홍제한양" in apt_name:
                             if area_prefix == "84":
@@ -114,37 +111,55 @@ with st.spinner('은평구 및 서대문구의 데이터를 불러오는 중입�
 
     # 5. 수집된 데이터 가공 및 표(UI) 출력
     if all_data:
-        df = pd.DataFrame(all_data)
+        # 모든 거래내역을 담은 원본 데이터프레임
+        raw_df = pd.DataFrame(all_data)
         
-        # 🌟 [수정] 북힐7차 데이터 중 '최근 3개월 이내' 데이터만 추출
-        our_apt_df = df[
-            (df['아파트명'].str.contains('북한산힐스테이트7차')) & 
-            (df['계약월'] >= three_months_ago_str)
-        ]
+        # 🌟 [핵심 수정 로직] 최근 3개월 데이터만 필터링 후 아파트별 '최고가 1건'만 추출
+        recent_df = raw_df[raw_df['계약월'] >= three_months_ago_str].copy()
         
-        if not our_apt_df.empty:
-            # 최근 3개월 내 최고가 계산
-            our_base_price = our_apt_df['거래금액(만원)'].max()
+        if not recent_df.empty:
+            # groupby로 아파트별로 묶은 뒤, 거래금액이 가장 큰(idxmax) 행의 인덱스를 찾습니다.
+            max_price_idx = recent_df.groupby('아파트명')['거래금액(만원)'].idxmax()
             
-            # 차액 계산 (비교 대상 아파트 가격 - 우리집 최근 3개월 최고가)
-            df['우리집 3개월 최고가대비 차액'] = df['거래금액(만원)'] - our_base_price
-            df['우리집 3개월 최고가대비 차액'] = df['우리집 3개월 최고가대비 차액'].apply(
-                lambda x: f"🔺 +{int(x):,}만원" if x > 0 else (f"🔻 {int(x):,}만원" if x < 0 else "-")
-            )
+            # 찾은 인덱스를 바탕으로 최고가 행들만 추려냅니다. (이게 우리가 볼 최종 요약표입니다)
+            top_price_df = recent_df.loc[max_price_idx].copy()
             
-            st.info(f"💡 기준가 설정 완료: **북한산힐스테이트7차**의 최근 3개월({three_months_ago_str} ~ 현재) **최고 실거래가는 {int(our_base_price):,}만원**입니다.")
-        else:
-            # 최근 3개월 내 거래가 없는 경우
-            df['우리집 3개월 최고가대비 차액'] = "최고가 산정불가"
-            st.warning(f"⚠️ 최근 3개월({three_months_ago_str} ~ 현재) 내 '북한산힐스테이트7차' 거래가 없어 기준가를 계산할 수 없습니다.")
+            # 북힐7차 데이터 추출 (최고가)
+            our_apt_df = top_price_df[top_price_df['아파트명'].str.contains('북한산힐스테이트7차')]
+            
+            if not our_apt_df.empty:
+                our_base_price = our_apt_df['거래금액(만원)'].max()
+                
+                # 차액 계산
+                top_price_df['우리집 3개월 최고가대비 차액'] = top_price_df['거래금액(만원)'] - our_base_price
+                top_price_df['우리집 3개월 최고가대비 차액'] = top_price_df['우리집 3개월 최고가대비 차액'].apply(
+                    lambda x: f"🔺 +{int(x):,}만원" if x > 0 else (f"🔻 {int(x):,}만원" if x < 0 else "-")
+                )
+                
+                st.info(f"💡 기준가 설정 완료: **북한산힐스테이트7차**의 최근 3개월({three_months_ago_str} ~ 현재) **최고 실거래가는 {int(our_base_price):,}만원**입니다.")
+            else:
+                top_price_df['우리집 3개월 최고가대비 차액'] = "최고가 산정불가"
+                st.warning(f"⚠️ 최근 3개월({three_months_ago_str} ~ 현재) 내 '북한산힐스테이트7차' 거래가 없어 기준가를 계산할 수 없습니다.")
 
-        # 가격 컬럼 보기 좋게 천 단위 콤마 추가
-        df['거래금액(만원)'] = df['거래금액(만원)'].apply(lambda x: f"{x:,}")
+            # 최종 표 데이터 정렬 및 천 단위 콤마
+            top_price_df['거래금액(만원)'] = top_price_df['거래금액(만원)'].apply(lambda x: f"{x:,}")
+            top_price_df = top_price_df.sort_values(by=['거래금액(만원)'], ascending=False)
+            
+            st.success(f"조회 완료: 선택한 아파트 중 최근 3개월 거래가 있는 총 {len(top_price_df)}개 단지의 '최고가' 비교")
+            st.dataframe(top_price_df, use_container_width=True, hide_index=True)
+            
+        else:
+            st.warning(f"최근 3개월({three_months_ago_str} ~ 현재) 내 거래된 데이터가 없습니다.")
+
+        st.write("---")
         
-        # 최신 거래일자 순으로 정렬
-        df = df.sort_values(by=['계약월', '거래일'], ascending=[False, False])
-        
-        st.success(f"조회 완료: 선택한 아파트 총 {len(df)}건 거래 수집")
-        st.dataframe(df, use_container_width=True, hide_index=True)
+        # 🌟 [신규 추가] 원본 데이터(로그)를 확인하고 검증할 수 있는 펼침 메뉴
+        with st.expander("🔍 전체 원본 거래 로그 보기 (어떤 거래들이 있었는지 확인해보세요!)"):
+            st.write("국토부 API에서 불러온 **선택 기간 내 모든 거래 내역**입니다. 누락되거나 의심되는 데이터가 있다면 여기서 확인해보세요.")
+            # 원본 데이터도 보기 좋게 콤마 정렬
+            display_raw_df = raw_df.copy()
+            display_raw_df = display_raw_df.sort_values(by=['아파트명', '계약월', '거래일'], ascending=[True, False, False])
+            st.dataframe(display_raw_df, use_container_width=True, hide_index=True)
+
     else:
-        st.warning("선택한 기간 내 조건에 맞는 거래 데이터가 없습니다.")
+        st.warning("선택한 기간 내 조건에 맞는 거래 데이터가 없습니다. (국토부에 신고된 실거래가 없는 경우일 수 있습니다.)")
