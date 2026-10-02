@@ -5,7 +5,7 @@ import xml.etree.ElementTree as ET
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
 
-# 🌟 [신규 추가] '만원' 단위의 금액을 'X억 Y천만원' 형태로 바꿔주는 마법의 함수!
+# 🌟 '만원' 단위의 금액을 'X억 Y천만원' 형태로 바꿔주는 함수
 def format_korean_money(amount_manwon):
     if pd.isna(amount_manwon) or amount_manwon == 0:
         return "0원"
@@ -20,22 +20,19 @@ def format_korean_money(amount_manwon):
         
     if man > 0:
         if eok > 0: 
-            res += " " # 억과 만원 사이 띄어쓰기 (예: 1억 2천만원)
+            res += " " 
         
-        # 2000처럼 천 단위로 딱 떨어질 때는 '2천만원'으로 표기
         if man % 1000 == 0:
             res += f"{man // 1000}천만원"
-        # 2500처럼 백 단위가 있을 때는 '2,500만원'으로 표기
         else:
             res += f"{man:,}만원"
     else:
-        # 만 단위가 0일 때는 '원'을 붙임 (예: 1억원)
         if eok > 0: 
             res += "원" 
             
     return res
 
-# 🌟 [신규 추가] 표에 표시될 증감 기호(🔺, 🔻)와 한글 금액을 합쳐주는 함수
+# 🌟 표에 표시될 증감 기호(🔺, 🔻)와 한글 금액을 합쳐주는 함수
 def format_gap_money(x):
     if pd.isna(x) or x == 0:
         return "-"
@@ -58,8 +55,8 @@ default_end_month_str = last_month.strftime("%Y%m")
 
 # 시작 월의 기본값을 5개월 전으로 세팅
 five_months_ago = today - relativedelta(months=5)
-default_start_month_str = five_months_ago.strftime("%Y%m") # 예: 202605
-five_months_ago_str = five_months_ago.strftime("%Y-%m")   # 필터링용 (예: 2026-05)
+default_start_month_str = five_months_ago.strftime("%Y%m") 
+five_months_ago_str = five_months_ago.strftime("%Y-%m")   
 
 # 드롭다운용 최근 3년(36개월) 월 리스트 생성
 month_list = [(today - relativedelta(months=i)).strftime("%Y%m") for i in range(36)]
@@ -76,13 +73,14 @@ with col2:
     end_month = st.selectbox("종료 월", month_list[::-1], index=month_list[::-1].index(default_end_month_str))
 
 target_area = st.sidebar.text_input("기본 전용면적(㎡) (예: 59)", "59")
-st.sidebar.caption("※ 무악청구1차, 홍제한양은 자동으로 84㎡가 조회됩니다.")
+# 🌟 [수정 완료] 무악청구를 청구1차로 업데이트하여 안내 문구 수정
+st.sidebar.caption("※ 청구1차, 홍제한양은 자동으로 84㎡가 조회됩니다.")
 
-# 비교할 아파트 목록 세팅
+# 🌟 [수정 완료] 코랩에서 찾아주신 정확한 공식 명칭과 신규 아파트(천연뜨란채) 적용!
 default_apts = [
     "북한산힐스테이트7차", "북한산현대힐스테이트3차", "래미안베라힐즈", "불광롯데캐슬",
-    "돈의문센트레빌", "녹번역e편한세상캐슬", "은평뉴타운박석고개힐스테이트1단지",
-    "e편한세상서대문", "북한산더샵", "무악청구1차", "홍제한양"
+    "돈의문센트레빌", "녹번역e편한세상캐슬", "박석고개1단지힐스테이트(116~131동)BL2-1",
+    "e편한세상서대문", "북한산더샵", "청구1차", "홍제한양", "천연뜨란채"
 ]
 selected_apts = st.sidebar.multiselect("비교 대상 아파트", default_apts, default=default_apts)
 
@@ -97,7 +95,8 @@ months_to_fetch = pd.date_range(start=start_dt, end=end_dt, freq='MS').strftime(
 
 url = "https://apis.data.go.kr/1613000/RTMSDataSvcAptTrade/getRTMSDataSvcAptTrade"
 all_data = []
-lawd_cd_list = ['11380', '11410'] # 은평구, 서대문구 코드
+# 서대문구(11410) 코드가 이미 포함되어 있어 천연뜨란채도 문제없이 수집됩니다.
+lawd_cd_list = ['11380', '11410'] 
 
 with st.spinner('은평구 및 서대문구의 데이터를 불러오는 중입니다... (조금만 기다려주세요)'):
     for ymd in months_to_fetch:
@@ -124,7 +123,8 @@ with st.spinner('은평구 및 서대문구의 데이터를 불러오는 중입�
                         area_prefix = str(area).split('.')[0]
                         
                         is_target_area = False
-                        if "무악청구" in apt_name or "홍제한양" in apt_name:
+                        # 🌟 [수정 완료] 무악청구 -> 청구1차로 84㎡ 예외 처리 조건 업데이트
+                        if "청구1차" in apt_name or "홍제한양" in apt_name:
                             if area_prefix == "84":
                                 is_target_area = True
                         else:
@@ -163,17 +163,14 @@ with st.spinner('은평구 및 서대문구의 데이터를 불러오는 중입�
             if not our_apt_df.empty:
                 our_base_price = our_apt_df['거래금액(만원)'].max()
                 
-                # 🌟 [수정 완료] 차액 계산 후 한글 표기 함수(format_gap_money) 일괄 적용
                 top_price_df['우리집 5개월 최고가대비 차액'] = top_price_df['거래금액(만원)'] - our_base_price
                 top_price_df['우리집 5개월 최고가대비 차액'] = top_price_df['우리집 5개월 최고가대비 차액'].apply(format_gap_money)
                 
-                # 🌟 [수정 완료] 안내 문구의 최고가 금액도 한글로 보기 좋게 적용
                 st.info(f"💡 기준가 설정 완료: **북한산힐스테이트7차**의 최근 5개월({five_months_ago_str} ~ 현재) **최고 실거래가는 {format_korean_money(our_base_price)}**입니다.")
             else:
                 top_price_df['우리집 5개월 최고가대비 차액'] = "최고가 산정불가"
                 st.warning(f"⚠️ 최근 5개월({five_months_ago_str} ~ 현재) 내 '북한산힐스테이트7차' 거래가 없어 기준가를 계산할 수 없습니다.")
 
-            # 최종 표 데이터 정렬 (보기 쉽게 금액 원본도 한글로 바꿉니다)
             top_price_df = top_price_df.sort_values(by=['거래금액(만원)'], ascending=False)
             top_price_df['거래금액(만원)'] = top_price_df['거래금액(만원)'].apply(format_korean_money)
             
@@ -189,7 +186,6 @@ with st.spinner('은평구 및 서대문구의 데이터를 불러오는 중입�
             st.write("국토부 API에서 불러온 **선택 기간 내 모든 거래 내역**입니다. 누락되거나 의심되는 데이터가 있다면 여기서 확인해보세요.")
             display_raw_df = raw_df.copy()
             
-            # 로그 원본 금액은 기존처럼 숫자로 보여주어 명확한 확인을 돕습니다.
             display_raw_df['거래금액(만원)'] = display_raw_df['거래금액(만원)'].apply(lambda x: f"{x:,}")
             display_raw_df = display_raw_df.sort_values(by=['아파트명', '계약월', '거래일'], ascending=[True, False, False])
             st.dataframe(display_raw_df, use_container_width=True, hide_index=True)
