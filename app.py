@@ -5,6 +5,48 @@ import xml.etree.ElementTree as ET
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
 
+# 🌟 [신규 추가] '만원' 단위의 금액을 'X억 Y천만원' 형태로 바꿔주는 마법의 함수!
+def format_korean_money(amount_manwon):
+    if pd.isna(amount_manwon) or amount_manwon == 0:
+        return "0원"
+    
+    abs_val = int(abs(amount_manwon))
+    eok = abs_val // 10000
+    man = abs_val % 10000
+    
+    res = ""
+    if eok > 0:
+        res += f"{eok}억"
+        
+    if man > 0:
+        if eok > 0: 
+            res += " " # 억과 만원 사이 띄어쓰기 (예: 1억 2천만원)
+        
+        # 2000처럼 천 단위로 딱 떨어질 때는 '2천만원'으로 표기
+        if man % 1000 == 0:
+            res += f"{man // 1000}천만원"
+        # 2500처럼 백 단위가 있을 때는 '2,500만원'으로 표기
+        else:
+            res += f"{man:,}만원"
+    else:
+        # 만 단위가 0일 때는 '원'을 붙임 (예: 1억원)
+        if eok > 0: 
+            res += "원" 
+            
+    return res
+
+# 🌟 [신규 추가] 표에 표시될 증감 기호(🔺, 🔻)와 한글 금액을 합쳐주는 함수
+def format_gap_money(x):
+    if pd.isna(x) or x == 0:
+        return "-"
+    
+    formatted_str = format_korean_money(x)
+    
+    if x > 0:
+        return f"🔺 +{formatted_str}"
+    else:
+        return f"🔻 -{formatted_str}"
+
 # 1. 페이지 기본 설정 및 제목 변경
 st.set_page_config(page_title="아파트 실거래가 비교", layout="wide")
 st.title("🏢 북힐7차와 다른 아파트 비교, 자산증식 합시다~혜주쓰")
@@ -14,7 +56,7 @@ today = datetime.today()
 last_month = today - relativedelta(months=1)
 default_end_month_str = last_month.strftime("%Y%m")
 
-# 🌟 [수정 완료] 시작 월의 기본값을 3개월 전에서 '5개월 전'으로 변경했습니다!
+# 시작 월의 기본값을 5개월 전으로 세팅
 five_months_ago = today - relativedelta(months=5)
 default_start_month_str = five_months_ago.strftime("%Y%m") # 예: 202605
 five_months_ago_str = five_months_ago.strftime("%Y-%m")   # 필터링용 (예: 2026-05)
@@ -29,7 +71,6 @@ st.sidebar.info("📌 지역: 은평구, 서대문구 자동 조회")
 st.sidebar.subheader("조회 기간")
 col1, col2 = st.sidebar.columns(2)
 with col1:
-    # 사이드바 시작 월 기본값을 5개월 전으로 세팅합니다.
     start_month = st.selectbox("시작 월", month_list[::-1], index=month_list[::-1].index(default_start_month_str))
 with col2:
     end_month = st.selectbox("종료 월", month_list[::-1], index=month_list[::-1].index(default_end_month_str))
@@ -78,12 +119,10 @@ with st.spinner('은평구 및 서대문구의 데이터를 불러오는 중입�
                 for item in items:
                     apt_name = item.find('aptNm').text.strip() if item.find('aptNm') is not None else ''
                     
-                    # 선택된 아파트 중 하나인지 확인
                     if any(apt in apt_name for apt in selected_apts):
                         area = item.find('excluUseAr').text if item.find('excluUseAr') is not None else '0'
                         area_prefix = str(area).split('.')[0]
                         
-                        # 특정 아파트(무악청구1차, 홍제한양)는 무조건 84㎡로 필터링, 나머지는 target_area로 필터링
                         is_target_area = False
                         if "무악청구" in apt_name or "홍제한양" in apt_name:
                             if area_prefix == "84":
@@ -92,7 +131,6 @@ with st.spinner('은평구 및 서대문구의 데이터를 불러오는 중입�
                             if area_prefix == target_area.strip():
                                 is_target_area = True
                         
-                        # 조건에 맞는 면적일 경우에만 데이터 추가
                         if is_target_area:
                             price_str = item.find('dealAmount').text.strip() if item.find('dealAmount') is not None else '0'
                             floor = item.find('floor').text if item.find('floor') is not None else '0'
@@ -113,39 +151,31 @@ with st.spinner('은평구 및 서대문구의 데이터를 불러오는 중입�
 
     # 5. 수집된 데이터 가공 및 표(UI) 출력
     if all_data:
-        # 모든 거래내역을 담은 원본 데이터프레임
         raw_df = pd.DataFrame(all_data)
-        
-        # 🌟 [수정 완료] 최근 '5개월' 데이터만 필터링 후 아파트별 '최고가 1건'만 추출
         recent_df = raw_df[raw_df['계약월'] >= five_months_ago_str].copy()
         
         if not recent_df.empty:
-            # 아파트별로 묶은 뒤, 거래금액이 가장 큰(최고가) 행의 인덱스를 찾습니다.
             max_price_idx = recent_df.groupby('아파트명')['거래금액(만원)'].idxmax()
-            
-            # 찾은 인덱스를 바탕으로 최고가 행들만 추려냅니다.
             top_price_df = recent_df.loc[max_price_idx].copy()
             
-            # 북힐7차 데이터 추출 (최고가)
             our_apt_df = top_price_df[top_price_df['아파트명'].str.contains('북한산힐스테이트7차')]
             
             if not our_apt_df.empty:
                 our_base_price = our_apt_df['거래금액(만원)'].max()
                 
-                # 차액 계산 (비교 아파트 가격 - 우리집 최근 5개월 최고가)
+                # 🌟 [수정 완료] 차액 계산 후 한글 표기 함수(format_gap_money) 일괄 적용
                 top_price_df['우리집 5개월 최고가대비 차액'] = top_price_df['거래금액(만원)'] - our_base_price
-                top_price_df['우리집 5개월 최고가대비 차액'] = top_price_df['우리집 5개월 최고가대비 차액'].apply(
-                    lambda x: f"🔺 +{int(x):,}만원" if x > 0 else (f"🔻 {int(x):,}만원" if x < 0 else "-")
-                )
+                top_price_df['우리집 5개월 최고가대비 차액'] = top_price_df['우리집 5개월 최고가대비 차액'].apply(format_gap_money)
                 
-                st.info(f"💡 기준가 설정 완료: **북한산힐스테이트7차**의 최근 5개월({five_months_ago_str} ~ 현재) **최고 실거래가는 {int(our_base_price):,}만원**입니다.")
+                # 🌟 [수정 완료] 안내 문구의 최고가 금액도 한글로 보기 좋게 적용
+                st.info(f"💡 기준가 설정 완료: **북한산힐스테이트7차**의 최근 5개월({five_months_ago_str} ~ 현재) **최고 실거래가는 {format_korean_money(our_base_price)}**입니다.")
             else:
                 top_price_df['우리집 5개월 최고가대비 차액'] = "최고가 산정불가"
                 st.warning(f"⚠️ 최근 5개월({five_months_ago_str} ~ 현재) 내 '북한산힐스테이트7차' 거래가 없어 기준가를 계산할 수 없습니다.")
 
-            # 최종 표 데이터 정렬 및 천 단위 콤마
-            top_price_df['거래금액(만원)'] = top_price_df['거래금액(만원)'].apply(lambda x: f"{x:,}")
+            # 최종 표 데이터 정렬 (보기 쉽게 금액 원본도 한글로 바꿉니다)
             top_price_df = top_price_df.sort_values(by=['거래금액(만원)'], ascending=False)
+            top_price_df['거래금액(만원)'] = top_price_df['거래금액(만원)'].apply(format_korean_money)
             
             st.success(f"조회 완료: 선택한 아파트 중 최근 5개월 거래가 있는 총 {len(top_price_df)}개 단지의 '최고가' 비교")
             st.dataframe(top_price_df, use_container_width=True, hide_index=True)
@@ -155,11 +185,12 @@ with st.spinner('은평구 및 서대문구의 데이터를 불러오는 중입�
 
         st.write("---")
         
-        # 원본 데이터(로그)를 확인하고 검증할 수 있는 펼침 메뉴
         with st.expander("🔍 전체 원본 거래 로그 보기 (어떤 거래들이 있었는지 확인해보세요!)"):
             st.write("국토부 API에서 불러온 **선택 기간 내 모든 거래 내역**입니다. 누락되거나 의심되는 데이터가 있다면 여기서 확인해보세요.")
-            # 원본 데이터도 보기 좋게 콤마 정렬 및 날짜순 정렬
             display_raw_df = raw_df.copy()
+            
+            # 로그 원본 금액은 기존처럼 숫자로 보여주어 명확한 확인을 돕습니다.
+            display_raw_df['거래금액(만원)'] = display_raw_df['거래금액(만원)'].apply(lambda x: f"{x:,}")
             display_raw_df = display_raw_df.sort_values(by=['아파트명', '계약월', '거래일'], ascending=[True, False, False])
             st.dataframe(display_raw_df, use_container_width=True, hide_index=True)
 
